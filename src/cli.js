@@ -159,7 +159,7 @@ function main() {
   const make = () => {
     const quote = config.mode === 'quote' ? randomQuote(config.quoteLength) : null;
     quoteSource = quote?.source ?? '';
-    const words = config.mode === 'custom' ? [...custom] : quote ? quote.text.trim().split(/\s+/) : [];
+    const words = config.mode === 'custom' ? [...custom] : quote ? quote.text.replace(/…/g, '...').trim().split(/\s+/) : [];
     if (!words.length) for (let i = 0; i < (config.mode === 'time' ? 100 : config.words); i++) words.push(randomWord(words));
     return new TypingTest(words, { ...config, time: config.mode === 'time' ? config.time : 0,
       nextWord: config.mode === 'time' ? randomWord : null });

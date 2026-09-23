@@ -96,3 +96,98 @@ test('counts distinguish missing, incorrect, extra, and bad-word separator', () 
     { allCorrect: 1, correctWord: 0, incorrect: 2, extra: 0, missed: 1 });
   assert.equal(countChars('catx', 'cat ', false).extra, 1);
 });
+
+// Source-derived traces: Monkeytype input/handlers/{before-insert-text,insert-text,
+// before-delete,delete}.ts and input/helpers/{validation,word-navigation}.ts.
+// Each fixture checks the state after a competing interpretation would diverge.
+test('correction-mode traces match upstream navigation and deletion rules', () => {
+  const cases = [
+    {
+      name: 'strict space at empty input is an error, not a skip',
+      options: { strictSpace: true }, actions: [' '],
+      expected: [0, ' ', 1, false],
+    },
+    {
+      name: 'word stop holds an incorrect separator in the same word',
+      options: { stopOnError: 'word' }, actions: ['c', 'x', ' '],
+      expected: [0, 'cx ', 2, false],
+    },
+    {
+      name: 'hard delete at first character returns to previous word',
+      options: { deleteOnError: 'letter_hard' }, actions: ['c', 'a', 't', ' ', 'x'],
+      expected: [0, 'cat', 1, false],
+    },
+    {
+      name: 'confidence on forbids returning to a skipped word',
+      options: { confidence: 'on' }, actions: ['c', 'a', ' ', 'backspace'],
+      expected: [1, '', 1, false],
+    },
+    {
+      name: 'freedom bypasses correct-word and max-confidence locks',
+      options: { confidence: 'max', freedom: true }, actions: ['c', 'a', 't', ' ', 'backspace'],
+      expected: [0, 'cat', 0, false],
+    },
+  ];
+  for (const { name, options, actions, expected } of cases) {
+    const t = new TypingTest(['cat', 'dog'], options);
+    for (const action of actions) action === 'backspace' ? t.backspace() : t.insert(action, 1000);
+    assert.deepEqual([t.index, t.input, t.errors, t.failed], expected, name);
+  }
+});
+
+test('Unicode spaces commit, typographic variants normalize to target before validation', () => {
+  const t = new TypingTest(["don't", '“yes”', 'go—now', 'end']);
+  type(t, "don't");
+  t.insert('　');
+  assert.equal(t.index, 1);
+  assert.equal(t.history[0], "don't ");
+  type(t, '"yes" ');
+  assert.equal(t.history[1], '“yes” ');
+  type(t, 'go-now ');
+  assert.equal(t.history[2], 'go—now ');
+  assert.equal(t.errors, 0);
+  const q = new TypingTest(['don’t', 'end']);
+  type(q, "don't ");
+  assert.equal(q.history[0], 'don’t ');
+});
+
+test('ellipsis expands into three input events when the target expects periods', () => {
+  const t = new TypingTest(['wait...']);
+  type(t, 'wait');
+  t.insert('…', 1004);
+  assert.equal(t.input, 'wait...');
+  assert.equal(t.keystrokes, 7);
+  assert.equal(t.ended, 1004);
+});
+
+test('quick end, input cap and timed partial statistics follow source boundaries', () => {
+  const quick = new TypingTest(['cat'], { quickEnd: true });
+  type(quick, 'cax');
+  assert.notEqual(quick.ended, null);
+  const stopped = new TypingTest(['cat'], { quickEnd: true, stopOnError: 'word' });
+  type(stopped, 'cax');
+  assert.equal(stopped.ended, null);
+  const capped = new TypingTest(['a', 'end']);
+  type(capped, 'x'.repeat(22));
+  assert.equal(capped.input.length, 22);
+  assert.equal(capped.insert('x'), false);
+  assert.equal(capped.insert(' '), true);
+  assert.equal(capped.index, 1);
+  const timed = new TypingTest(['cat', 'long'], { time: 2 });
+  type(timed, 'cat ', 1000);
+  type(timed, 'lo', 1200);
+  timed.tick(3000);
+  assert.equal(timed.stats(3000).correctWord, 6);
+  assert.equal(timed.stats(3000).missed, 0);
+});
+
+test('expert ignores a leading separator while master fails on its incorrect keystroke', () => {
+  const expert = new TypingTest(['cat', 'dog'], { difficulty: 'expert' });
+  expert.insert(' ');
+  assert.equal(expert.input, ' ');
+  assert.equal(expert.failed, false);
+  const master = new TypingTest(['cat', 'dog'], { difficulty: 'master' });
+  master.insert(' ');
+  assert.equal(master.index, 0);
+  assert.equal(master.failed, true);
+});

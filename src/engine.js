@@ -1,4 +1,16 @@
 // Typing rules adapted from Monkeytype's input handlers (GPL-3.0).
+const equivalent = [
+  new Set(['’', '‘', "'", 'ʼ', '׳', 'ʻ', '᾽']),
+  new Set(['"', '”', '“', '„']),
+  new Set(['–', '—', '-', '‐', '‑']),
+  new Set([',', '‚']),
+];
+const spaces = new Set([
+  0x0020, 0x2002, 0x2003, 0x2009, 0x3000, 0x00a0, 0x1680,
+  0x202f, 0xfeff, 0x2007, 0x2008, 0x2004, 0x200a, 0x200b,
+]);
+const isSpace = char => spaces.has(char.codePointAt(0));
+
 export function countChars(input, target, partial = false) {
   const result = { allCorrect: 0, correctWord: 0, incorrect: 0, extra: 0, missed: 0 };
   const correct = input === target;
@@ -47,10 +59,18 @@ export class TypingTest {
     if (this.ended !== null || char.length !== 1 || (char < ' ' && char !== '\n')) return false;
     // A newline is only a commit when the generated target contains one.
     if (char === '\n') return false;
+    if (char === '…' && this.target()[this.input.length] !== '…') {
+      for (const period of '...') this.insert(period, now);
+      return true;
+    }
     const o = this.options;
     const wordIndex = this.index;
     const before = this.input;
     const target = this.target();
+    const expected = target[before.length];
+    if (expected !== undefined && (equivalent.some(set => set.has(char) && set.has(expected)) ||
+      (expected === ' ' && isSpace(char)))) char = expected;
+    else if (isSpace(char)) char = ' ';
     const separator = char === ' ';
     const hard = o.deleteOnError.endsWith('_hard');
     if (separator && !before && !(o.strictSpace || o.difficulty !== 'normal' || hard)) return false;
