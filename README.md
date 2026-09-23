@@ -1,15 +1,15 @@
 # monkeytype-tui
 
-A terminal typing test inspired by [Monkeytype](https://github.com/monkeytypegame/monkeytype). Requires Node.js 20+ and an interactive terminal. No installation or network connection is needed.
+A terminal typing test inspired by [Monkeytype](https://github.com/monkeytypegame/monkeytype). Requires Node.js 20+, pnpm, and an interactive terminal. The app has no runtime dependencies.
 
 ```sh
 cd monkeytype-tui
-npm start
-npm start -- --words 50
-npm start -- --time 30
-npm start -- --mode quote --quote-length medium
-npm start -- --text "one two three" --stop-on-error word
-npm test
+pnpm start
+pnpm start --words 50
+pnpm start --time 30
+pnpm start --mode quote --quote-length medium
+pnpm start --text "one two three" --stop-on-error word
+pnpm test
 ```
 
 The default is Monkeytype's English **time 30** test, with punctuation and numbers off. The fullscreen interface uses the serika-dark palette, a centered three-line test, a mode bar, and a separate results state. F1/F2/F3 switch between time, words, and quote; F4 selects custom text when supplied with `--text`. F5/F6 cycle Monkeytype's time (15/30/60/120), word (10/25/50/100), or quote-length (short/medium/long/thicc) presets. Tab restarts; Esc quits. Changing modes or lengths starts a new test.
