@@ -5,20 +5,28 @@ import readline from 'node:readline';
 import { TypingTest } from './engine.js';
 
 const corpus = JSON.parse(readFileSync(new URL('../data/english.json', import.meta.url))).words;
-const usage = `Usage: node src/cli.js [--words N | --time SECONDS] [--text "custom words"]
+const quotes = JSON.parse(readFileSync(new URL('../data/quotes-english.json', import.meta.url))).quotes;
+const timeChoices = [15, 30, 60, 120];
+const wordChoices = [10, 25, 50, 100];
+const quoteChoices = ['short', 'medium', 'long', 'thicc'];
+const quoteRanges = [[0, 100], [101, 300], [301, 600], [601, Infinity]];
+const usage = `Usage: node src/cli.js [--mode time|words|quote|custom] [--words N | --time SECONDS] [--text "custom words"]
+  --quote-length short|medium|long|thicc
   --strict-space --stop-on-error off|letter|word
   --delete-on-error off|letter|word|letter_hard|word_hard
   --difficulty normal|expert|master --confidence off|on|max
   --freedom --quick-end
 
 Backspace: erase character  Ctrl+Backspace/Ctrl+W: erase word
+F1/F2/F3/F4: time/words/quote/custom  F5/F6: change length
 Tab: restart  Esc/Ctrl+C: quit`;
 
 function args(argv) {
-  const config = { words: 25, time: 0, text: null, strictSpace: false,
+  const config = { mode: 'time', words: 50, time: 30, quoteLength: 'medium', text: null, strictSpace: false,
     stopOnError: 'off', deleteOnError: 'off', difficulty: 'normal',
     confidence: 'off', freedom: false, quickEnd: false };
   const names = { '--words': 'words', '--time': 'time', '--text': 'text',
+    '--mode': 'mode', '--quote-length': 'quoteLength',
     '--stop-on-error': 'stopOnError', '--delete-on-error': 'deleteOnError',
     '--difficulty': 'difficulty', '--confidence': 'confidence' };
   const flags = { '--strict-space': 'strictSpace', '--freedom': 'freedom', '--quick-end': 'quickEnd' };
@@ -26,7 +34,12 @@ function args(argv) {
     const arg = argv[i];
     if (arg === '--help') { console.log(usage); process.exit(0); }
     if (flags[arg]) config[flags[arg]] = true;
-    else if (names[arg] && argv[i + 1]) config[names[arg]] = argv[++i];
+    else if (names[arg] && argv[i + 1]) {
+      config[names[arg]] = argv[++i];
+      if (arg === '--words') config.mode = 'words';
+      if (arg === '--time') config.mode = 'time';
+      if (arg === '--text') config.mode = 'custom';
+    }
     else throw new Error(`Unknown or incomplete option: ${arg}`);
   }
   config.words = Number(config.words);
@@ -36,7 +49,11 @@ function args(argv) {
       !['off', 'letter', 'word'].includes(config.stopOnError) ||
       !['off', 'letter', 'word', 'letter_hard', 'word_hard'].includes(config.deleteOnError) ||
       !['normal', 'expert', 'master'].includes(config.difficulty) ||
-      !['off', 'on', 'max'].includes(config.confidence)) throw new Error('Invalid option value');
+      !['off', 'on', 'max'].includes(config.confidence) ||
+      !['time', 'words', 'quote', 'custom'].includes(config.mode) ||
+      !quoteChoices.includes(config.quoteLength) ||
+      (config.mode === 'time' && config.time === 0) ||
+      (config.mode === 'custom' && !config.text?.trim())) throw new Error('Invalid option value');
   return config;
 }
 
@@ -45,8 +62,20 @@ function randomWord(previous) {
   return choices[Math.floor(Math.random() * choices.length)];
 }
 
-const gray = '\x1b[90m', red = '\x1b[31m', green = '\x1b[32m',
-  yellow = '\x1b[33m', reset = '\x1b[0m', caret = '\x1b[7m';
+function randomQuote(length) {
+  const [min, max] = quoteRanges[quoteChoices.indexOf(length)];
+  const options = quotes.filter(q => q.length >= min && q.length <= max && !/[\r\n]/.test(q.text));
+  return options[Math.floor(Math.random() * options.length)];
+}
+
+const background = '\x1b[48;2;50;52;55m';
+const muted = '\x1b[38;2;100;102;105m';
+const text = '\x1b[38;2;209;208;197m';
+const accent = '\x1b[38;2;226;183;20m';
+const error = '\x1b[38;2;202;71;84m';
+const extra = '\x1b[38;2;126;42;51m';
+const reset = '\x1b[0m';
+const move = (row, col) => `\x1b[${row};${col}H`;
 
 function paintedWord(test, index) {
   const target = test.words[index];
@@ -55,78 +84,125 @@ function paintedWord(test, index) {
   let result = '';
   for (let i = 0; i < Math.max(target.length, input.length + (active ? 1 : 0)); i++) {
     const ch = input[i] ?? target[i] ?? ' ';
-    const color = input[i] === undefined ? (index < test.index ? red : gray) :
-      i >= target.length ? yellow : ch === target[i] ? green : red;
-    result += `${color}${active && i === input.length ? caret : ''}${ch}${reset}`;
+    const color = input[i] === undefined ? (index < test.index ? error : muted) :
+      i >= target.length ? extra : ch === target[i] ? text : error;
+    const cursor = active && i === input.length;
+    result += `${cursor ? '\x1b[48;2;226;183;20m\x1b[38;2;50;52;55m' : background + color}${ch}${background}${reset}`;
   }
   return result;
 }
 
-function render(test) {
-  const width = Math.max(20, process.stdout.columns || 80);
-  const height = Math.max(8, process.stdout.rows || 24);
+function render(test, config, quoteSource) {
+  const width = process.stdout.columns || 80;
+  const height = process.stdout.rows || 24;
+  const contentWidth = Math.max(20, Math.min(90, width - 6));
+  const left = Math.max(1, Math.floor((width - contentWidth) / 2) + 1);
   const lines = [];
   let line = [], length = 0;
   let activeLine = 0;
   for (let i = 0; i < test.words.length; i++) {
     const size = Math.max(test.words[i].length, i === test.index ? test.input.length + 1 : 0);
-    if (length && length + size + 1 > width - 2) {
+    if (length && length + size + 1 > contentWidth) {
       lines.push(line.join(' ')); line = []; length = 0;
     }
     if (i === test.index) activeLine = lines.length;
     line.push(paintedWord(test, i));
     length += size + (length ? 1 : 0);
-    if (lines.length > activeLine + height) break;
   }
   if (line.length) lines.push(line.join(' '));
   const start = Math.max(0, activeLine - 1);
-  const shown = lines.slice(start, start + Math.max(3, height - 7));
+  const shown = lines.slice(start, start + 3);
   const remaining = test.options.time && test.started !== null
     ? Math.max(0, Math.ceil(test.options.time - (Date.now() - test.started) / 1000))
     : null;
   const stat = test.stats();
-  const title = ` monkeytype-tui  ${test.options.time ? `${remaining ?? test.options.time}s` : `${test.index + 1}/${test.words.length} words`} `;
-  const footer = test.ended !== null
-    ? `${test.failed ? 'FAILED' : 'FINISHED'}  ${stat.wpm} wpm  ${stat.accuracy}% accuracy  Tab restart / Esc quit`
-    : `${stat.wpm} wpm  ${stat.accuracy}% accuracy  Tab restart / Esc quit`;
-  process.stdout.write(`\x1b[H\x1b[J${title}\n\n${shown.join('\n')}\n\n${footer}${reset}`);
+  const center = (s) => Math.max(1, Math.floor((width - s.length) / 2) + 1);
+  const modes = ['time', 'words', 'quote', ...(config.text ? ['custom'] : [])];
+  const selection = config.mode === 'time' ? timeChoices.map(String) :
+    config.mode === 'words' ? wordChoices.map(String) :
+      config.mode === 'quote' ? quoteChoices : [];
+  const chosen = String(config.mode === 'time' ? config.time :
+    config.mode === 'words' ? config.words : config.quoteLength);
+  let out = `${background}\x1b[2J`;
+  const at = (row, col, value) => { if (row > 0 && row <= height) out += `${move(row, col)}${value}`; };
+  at(2, left, `${accent}monkeytype${muted}  tui`);
+  at(2, Math.max(left, width - 17), `${muted}english`);
+  const menu = modes.map((mode, i) => `${config.mode === mode ? accent : muted}${i + 1} ${mode}`).join(`${muted}  /  `);
+  at(5, center(menu.replace(/\x1b\[[0-9;]*m/g, '')), menu);
+  if (selection.length) {
+    const choices = selection.map(v => `${v === chosen ? accent : muted}${v}`).join(`${muted}   `);
+    at(7, center(choices.replace(/\x1b\[[0-9;]*m/g, '')), choices);
+  }
+  const top = Math.max(10, Math.floor(height / 2) - 2);
+  if (test.ended !== null) {
+    at(top - 2, left, `${test.failed ? error + 'test failed' : accent + 'test complete'}`);
+    at(top, left, `${accent}${stat.wpm} ${muted}wpm       ${accent}${stat.accuracy}% ${muted}accuracy`);
+    at(top + 2, left, `${muted}correct ${stat.correctWord}   incorrect ${stat.incorrect}   extra ${stat.extra}   missed ${stat.missed}`);
+    at(top + 4, left, `${muted}tab to restart · f1-f4 to change mode`);
+  } else {
+    const label = test.options.time ? `${remaining ?? test.options.time}` :
+      `${test.index + 1} / ${test.words.length}`;
+    at(top - 2, left, `${accent}${label}`);
+    shown.forEach((value, i) => at(top + i * 2, left, value));
+    if (config.mode === 'quote' && quoteSource) at(top + 7, left, `${muted}— ${quoteSource.slice(0, contentWidth - 2)}`);
+  }
+  const hint = 'tab restart   f1-f4 mode   f5/f6 length   esc quit';
+  at(height - 2, center(hint), `${muted}${hint}`);
+  return out + reset;
 }
 
 function main() {
   const config = args(process.argv.slice(2));
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Run this in an interactive terminal');
   const custom = config.text?.trim().split(/\s+/);
-  if (config.text !== null && !config.text?.trim()) throw new Error('Custom text must contain words');
+  let quoteSource = '';
   const make = () => {
-    const words = custom ? [...custom] : [];
-    if (!custom) for (let i = 0; i < (config.time ? 100 : config.words); i++) words.push(randomWord(words));
-    return new TypingTest(words, { ...config, nextWord: config.time ? randomWord : null });
+    const quote = config.mode === 'quote' ? randomQuote(config.quoteLength) : null;
+    quoteSource = quote?.source ?? '';
+    const words = config.mode === 'custom' ? [...custom] : quote ? quote.text.trim().split(/\s+/) : [];
+    if (!words.length) for (let i = 0; i < (config.mode === 'time' ? 100 : config.words); i++) words.push(randomWord(words));
+    return new TypingTest(words, { ...config, time: config.mode === 'time' ? config.time : 0,
+      nextWord: config.mode === 'time' ? randomWord : null });
   };
   let test = make();
   readline.emitKeypressEvents(process.stdin);
   process.stdin.setRawMode(true);
   process.stdin.resume();
-  process.stdout.write('\x1b[?25l');
-  const timer = setInterval(() => { test.tick(); render(test); }, 100);
+  process.stdout.write('\x1b[?1049h\x1b[?25l');
+  const redraw = () => process.stdout.write(render(test, config, quoteSource));
+  const timer = setInterval(() => { test.tick(); redraw(); }, 100);
   function exit() {
     clearInterval(timer);
     process.stdin.setRawMode(false);
-    process.stdout.write('\x1b[?25h\x1b[0m\n');
+    process.stdout.write('\x1b[?25h\x1b[?1049l\x1b[0m');
     process.exit(0);
   }
   process.on('SIGTERM', exit);
-  process.stdout.on('resize', () => render(test));
+  process.stdout.on('resize', redraw);
   process.stdin.on('keypress', (str, key) => {
     if (key.name === 'escape' || (key.ctrl && key.name === 'c')) return exit();
     if (key.name === 'tab') test = make();
+    else if (/^f[1-4]$/.test(key.name)) {
+      const mode = ['time', 'words', 'quote', 'custom'][Number(key.name[1]) - 1];
+      if (mode !== 'custom' || custom) { config.mode = mode; test = make(); }
+    } else if (key.name === 'f5' || key.name === 'f6') {
+      const choices = config.mode === 'time' ? timeChoices :
+        config.mode === 'words' ? wordChoices : config.mode === 'quote' ? quoteChoices : null;
+      if (choices) {
+        const field = config.mode === 'quote' ? 'quoteLength' : config.mode;
+        const index = choices.indexOf(config[field]);
+        config[field] = choices[(index + (key.name === 'f6' ? 1 : choices.length - 1)) % choices.length];
+        test = make();
+      }
+    }
     else if (key.name === 'backspace' || (key.ctrl && (key.name === 'w' || key.name === 'backspace'))) {
       test.backspace(!!key.ctrl);
     } else if (!key.ctrl && !key.meta && /^[^\x00-\x1f\x7f]+$/u.test(str)) {
       for (const ch of str) test.insert(ch);
     }
-    render(test);
+    redraw();
   });
-  render(test);
+  redraw();
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
