@@ -84,21 +84,47 @@ const move = (row, col) => `\x1b[${row};${col}H`;
 
 function paintedWord(test, index) {
   const target = test.words[index];
-  const input = index === test.index ? test.input : test.history[index];
   const active = index === test.index && test.ended === null;
-  let result = '';
-  const hasSuffix = active || input.length > target.length;
-  for (let i = 0; i < target.length + (hasSuffix ? 1 : 0); i++) {
-    const ch = input[i] ?? target[i] ?? ' ';
-    const color = input[i] === undefined ? (index < test.index ? error : muted) :
+  const input = active ? test.input :
+    (index === test.index ? test.input : test.history[index]).replace(/ $/, '');
+  const visible = active ? input : input.slice(0, target.length);
+  let result = !active && input.length > target.length ? '\x1b[4m' : '';
+  for (let i = 0; i < Math.max(target.length, visible.length) + (active ? 1 : 0); i++) {
+    const ch = visible[i] ?? target[i] ?? ' ';
+    const color = visible[i] === undefined ? (index < test.index ? error : muted) :
       i >= target.length ? extra : ch === target[i] ? text : error;
-    const cursor = active && i === Math.min(input.length, target.length);
-    result += `${cursor ? '\x1b[48;2;226;183;20m\x1b[38;2;50;52;55m' : background + color}${ch}${background}`;
+    result += `${background}${color}${ch}`;
   }
-  return result + `${muted}${' '.repeat(hasSuffix ? 1 : 2)}`;
+  return result + `\x1b[24m${muted}${' '.repeat(active ? 1 : 2)}`;
 }
 
-function render(test, config, quoteSource) {
+function graph(samples, width, height) {
+  const points = samples.slice(-width);
+  const peak = Math.max(10, ...points.flatMap(point => [point.wpm, point.raw]));
+  const cells = Array.from({ length: height }, () => Array(width).fill(' '));
+  const errorMarks = Array(width).fill(' ');
+  for (const [field, marker] of [['raw', '·'], ['wpm', '●']]) {
+    let previous = null;
+    for (let x = 0; x < points.length; x++) {
+      const y = height - 1 - Math.round(points[x][field] / peak * (height - 1));
+      const column = points.length === 1 ? width - 1 : Math.round(x * (width - 1) / (points.length - 1));
+      cells[y][column] = marker;
+      if (points[x].errors) errorMarks[column] = '×';
+      if (previous && column - previous.x > 1) {
+        for (let step = previous.x + 1; step < column; step++) {
+          const middle = Math.round(previous.y + (y - previous.y) * (step - previous.x) / (column - previous.x));
+          cells[middle][step] = marker === '●' ? '─' : '·';
+        }
+      }
+      previous = { x: column, y };
+    }
+  }
+  return { peak, rows: cells.map(row => row.map(cell =>
+    cell === '●' || cell === '─' ? accent + cell : cell === '·' ? text + cell : ' ').join('')),
+  errors: `${error}${errorMarks.join('')}` };
+}
+
+function render(test, config, quoteSource, samples) {
   const width = process.stdout.columns || 80;
   const height = process.stdout.rows || 24;
   const contentWidth = Math.max(20, Math.min(90, width - 6));
@@ -106,17 +132,22 @@ function render(test, config, quoteSource) {
   const lines = [];
   let line = [], length = 0;
   let activeLine = 0;
+  let cursorColumn = left;
   for (let i = 0; i < test.words.length; i++) {
-    const size = test.words[i].length + 2;
+    const size = Math.max(test.words[i].length,
+      i === test.index && test.ended === null ? test.input.length : 0) + 2;
     if (length && length + size > contentWidth) {
       lines.push(line.join('')); line = []; length = 0;
     }
-    if (i === test.index) activeLine = lines.length;
+    if (i === test.index) {
+      activeLine = lines.length;
+      cursorColumn = left + length + test.input.length;
+    }
     line.push(paintedWord(test, i));
     length += size;
   }
   if (line.length) lines.push(line.join(''));
-  const start = Math.max(0, activeLine - 2);
+  const start = Math.max(0, activeLine - 1);
   const shown = lines.slice(start, start + 3);
   const remaining = test.options.time && test.started !== null
     ? Math.max(0, Math.ceil(test.options.time - (Date.now() - test.started) / 1000))
@@ -134,30 +165,47 @@ function render(test, config, quoteSource) {
     if (row > 0 && row <= height) rows.set(row, (rows.get(row) ?? '') + `${move(row, col)}${value}`);
   };
   at(2, left, `${accent}monkeytype${muted}  tui`);
-  at(2, Math.max(left, width - 17), `${muted}english`);
-  const menu = modes.map((mode, i) => `${config.mode === mode ? accent : muted}${i + 1} ${mode}`).join(`${muted}  /  `);
-  at(5, center(menu.replace(/\x1b\[[0-9;]*m/g, '')), menu);
-  if (selection.length) {
-    const choices = selection.map(v => `${v === chosen ? accent : muted}${v}`).join(`${muted}   `);
-    at(7, center(choices.replace(/\x1b\[[0-9;]*m/g, '')), choices);
+  if (width >= 50) at(2, width - 17, `${muted}english`);
+  if (test.ended === null) {
+    const menu = modes.map((mode, i) => `${config.mode === mode ? accent : muted}${width < 60 ? '' : `${i + 1} `}${mode}`)
+      .join(width < 60 ? `${muted}  ` : `${muted}  /  `);
+    at(5, center(menu.replace(/\x1b\[[0-9;]*m/g, '')), menu);
+    if (selection.length) {
+      const choices = selection.map(v => `${v === chosen ? accent : muted}${v}`).join(`${muted}   `);
+      at(7, center(choices.replace(/\x1b\[[0-9;]*m/g, '')), choices);
+    }
   }
   const top = Math.max(10, Math.floor(height / 2) - 2);
   if (test.ended !== null) {
-    at(top - 2, left, `${test.failed ? error + 'test failed' : accent + 'test complete'}`);
-    at(top, left, `${accent}${stat.wpm} ${muted}wpm       ${accent}${stat.accuracy}% ${muted}accuracy`);
-    at(top + 2, left, `${muted}correct ${stat.correctWord}   incorrect ${stat.incorrect}   extra ${stat.extra}   missed ${stat.missed}`);
-    at(top + 4, left, `${muted}tab to restart · f1-f4 to change mode`);
+    const chartTop = Math.max(10, top + 1);
+    const chartHeight = Math.min(9, Math.max(0, height - chartTop - 6));
+    at(top - 3, left, `${test.failed ? error + 'test failed' : accent + 'test complete'}`);
+    at(top - 1, left, `${accent}${stat.wpm} ${muted}wpm       ${accent}${stat.accuracy}% ${muted}accuracy`);
+    if (chartHeight) {
+      const chartWidth = Math.max(1, contentWidth - 5);
+      const chart = graph(samples, chartWidth, chartHeight);
+      chart.rows.forEach((row, i) => at(chartTop + i, left, `${muted}${i ? '  │ ' : String(chart.peak).padStart(3)}${row}`));
+      at(chartTop + chartHeight, left, `${muted}  └${'─'.repeat(chartWidth + 1)}`);
+      at(chartTop + chartHeight + 1, left, `${muted}    ${chart.errors}`);
+      at(chartTop + chartHeight + 2, left, `${accent}● wpm  ${text}· raw  ${error}× errors`);
+    }
+    const totals = `correct ${stat.correctWord}   incorrect ${stat.incorrect}   extra ${stat.extra}   missed ${stat.missed}`;
+    if (totals.length > contentWidth) {
+      at(height - 3, left, `${muted}correct ${stat.correctWord}   incorrect ${stat.incorrect}`);
+      at(height - 2, left, `${muted}extra ${stat.extra}   missed ${stat.missed}`);
+    } else at(height - 2, left, `${muted}${totals}`);
   } else {
     const label = test.options.time ? `${remaining ?? test.options.time}` :
       `${test.index + 1} / ${test.words.length}`;
-    const overflow = Math.max(0, test.input.length - test.words[test.index].length);
-    at(top - 2, left, `${accent}${label}${overflow ? `${error}   +${overflow} extra` : ''}`);
+    at(top - 2, left, `${accent}${label}`);
     shown.forEach((value, i) => at(top + i * 2, left, value));
     if (config.mode === 'quote' && quoteSource) at(top + 7, left, `${muted}— ${quoteSource.slice(0, contentWidth - 2)}`);
+    const hint = width < 60 ? 'tab restart   f1-f4 mode   esc quit' :
+      'tab restart   f1-f4 mode   f5/f6 length   esc quit';
+    at(height - 2, center(hint), `${muted}${hint}`);
   }
-  const hint = 'tab restart   f1-f4 mode   f5/f6 length   esc quit';
-  at(height - 2, center(hint), `${muted}${hint}`);
-  return { rows, width, height };
+  return { rows, width, height, cursor: test.ended === null ?
+    { row: top + (activeLine - start) * 2, col: Math.min(width, cursorColumn) } : null };
 }
 
 function main(argv) {
@@ -174,14 +222,34 @@ function main(argv) {
       nextWord: config.mode === 'time' ? randomWord : null });
   };
   let test = make();
+  let samples = [];
+  let lastErrors = 0;
+  let finished = false;
+  const restart = () => { test = make(); samples = []; lastErrors = 0; finished = false; };
   readline.emitKeypressEvents(process.stdin);
   process.stdin.setRawMode(true);
   process.stdin.resume();
-  process.stdout.write('\x1b[?1049h\x1b[?25l');
+  process.stdout.write('\x1b[?1049h\x1b[6 q');
   let previous = new Map();
   let dimensions = '';
+  let cursorState = '';
   const redraw = () => {
-    const { rows, width, height } = render(test, config, quoteSource);
+    if (test.started !== null && !finished) {
+      const elapsed = Math.max(0, (Math.min(Date.now(), test.ended ?? Infinity) - test.started) / 1000);
+      const seconds = Math.floor(elapsed);
+      const record = duration => {
+        const stats = test.stats();
+        samples.push({ wpm: Math.round(stats.correctWord * 12 / duration),
+          raw: Math.round(test.keystrokes * 12 / duration), errors: test.errors - lastErrors });
+        lastErrors = test.errors;
+      };
+      while (samples.length < seconds) record(samples.length + 1);
+      if (test.ended !== null) {
+        if (elapsed > seconds || !samples.length) record(Math.max(elapsed, 0.001));
+        finished = true;
+      }
+    }
+    const { rows, width, height, cursor } = render(test, config, quoteSource, samples);
     const size = `${width}x${height}`;
     let output = '';
     if (size !== dimensions) {
@@ -195,24 +263,26 @@ function main(argv) {
         output += `${move(row, 1)}${background}${' '.repeat(width)}${value}`;
       }
     }
-    if (output) process.stdout.write(output + reset);
+    const placement = cursor ? `${move(cursor.row, cursor.col)}\x1b[?25h` : '\x1b[?25l';
+    if (output || placement !== cursorState) process.stdout.write(output + reset + placement);
+    cursorState = placement;
     previous = rows;
   };
   const timer = setInterval(() => { test.tick(); redraw(); }, 100);
   function exit() {
     clearInterval(timer);
     process.stdin.setRawMode(false);
-    process.stdout.write('\x1b[?25h\x1b[?1049l\x1b[0m');
+    process.stdout.write('\x1b[?25h\x1b[0 q\x1b[?1049l\x1b[0m');
     process.exit(0);
   }
   process.on('SIGTERM', exit);
   process.stdout.on('resize', redraw);
   process.stdin.on('keypress', (str, key) => {
     if (key.name === 'escape' || (key.ctrl && key.name === 'c')) return exit();
-    if (key.name === 'tab') test = make();
+    if (key.name === 'tab') restart();
     else if (/^f[1-4]$/.test(key.name)) {
       const mode = ['time', 'words', 'quote', 'custom'][Number(key.name[1]) - 1];
-      if (mode !== 'custom' || custom) { config.mode = mode; test = make(); }
+      if (mode !== 'custom' || custom) { config.mode = mode; restart(); }
     } else if (key.name === 'f5' || key.name === 'f6') {
       const choices = config.mode === 'time' ? timeChoices :
         config.mode === 'words' ? wordChoices : config.mode === 'quote' ? quoteChoices : null;
@@ -220,7 +290,7 @@ function main(argv) {
         const field = config.mode === 'quote' ? 'quoteLength' : config.mode;
         const index = choices.indexOf(config[field]);
         config[field] = choices[(index + (key.name === 'f6' ? 1 : choices.length - 1)) % choices.length];
-        test = make();
+        restart();
       }
     }
     else if (key.name === 'backspace' || (key.ctrl && (key.name === 'w' || key.name === 'backspace'))) {
