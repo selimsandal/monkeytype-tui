@@ -2,29 +2,33 @@ import english from '../data/english.json' with { type: 'json' };
 import spanish from '../data/spanish.json' with { type: 'json' };
 import french from '../data/french.json' with { type: 'json' };
 import german from '../data/german.json' with { type: 'json' };
+import turkish from '../data/turkish.json' with { type: 'json' };
 import englishQuotes from '../data/quotes-english.json' with { type: 'json' };
 import spanishQuotes from '../data/quotes-spanish.json' with { type: 'json' };
 import frenchQuotes from '../data/quotes-french.json' with { type: 'json' };
 import germanQuotes from '../data/quotes-german.json' with { type: 'json' };
+import turkishQuotes from '../data/quotes-turkish.json' with { type: 'json' };
 
 export const languages = {
   english: { words: english.words, quotes: englishQuotes.quotes },
   spanish: { words: spanish.words, quotes: spanishQuotes.quotes },
   french: { words: french.words, quotes: frenchQuotes.quotes },
   german: { words: german.words, quotes: germanQuotes.quotes },
+  turkish: { words: turkish.words, quotes: turkishQuotes.quotes },
 };
 
 const quoteRanges = [[0, 100], [101, 300], [301, 600], [601, Infinity]];
 export const quoteChoices = ['short', 'medium', 'long', 'thicc'];
 
 export function randomWord(previous, config, count = Infinity, random = Math.random) {
+  const locale = config.language === 'turkish' ? 'tr-TR' : undefined;
   const choices = languages[config.language].words.filter(word =>
     !/\s/.test(word) && !previous.slice(-2).some(prior =>
-      prior.replace(/[.,?!]$/, '').toLocaleLowerCase() === word.toLocaleLowerCase()));
+      prior.replace(/[.,?!]$/, '').toLocaleLowerCase(locale) === word.toLocaleLowerCase(locale)));
   let word = choices[Math.floor(random() * choices.length)];
   if (config.punctuation) {
     const prior = previous.at(-1) ?? '';
-    if (!previous.length || /[.?!]$/.test(prior)) word = word[0].toLocaleUpperCase() + word.slice(1);
+    if (!previous.length || /[.?!]$/.test(prior)) word = word[0].toLocaleUpperCase(locale) + word.slice(1);
     if ((previous.length === count - 1 || (random() < 0.1 && !/[.,]$/.test(prior) && previous.length !== count - 2))) {
       word += '.';
     } else if (random() < 0.2 && !prior.endsWith(',')) word += ',';

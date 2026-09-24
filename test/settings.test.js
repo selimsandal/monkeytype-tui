@@ -12,10 +12,10 @@ test('settings persist language, correction modes and presets while rejecting in
     const { loadSettings, saveSettings } = await import('../src/settings.js?settings-test');
     const config = loadSettings();
     assert.equal(config.language, 'english');
-    saveSettings({ ...config, mode: 'words', words: 25, language: 'french', punctuation: true,
+    saveSettings({ ...config, mode: 'words', words: 25, language: 'turkish', punctuation: true,
       stopOnError: 'word' });
     assert.deepEqual([loadSettings().mode, loadSettings().words, loadSettings().language,
-      loadSettings().punctuation, loadSettings().stopOnError], ['words', 25, 'french', true, 'word']);
+      loadSettings().punctuation, loadSettings().stopOnError], ['words', 25, 'turkish', true, 'word']);
     const file = join(root, 'monkeytype-tui', 'settings.json');
     const saved = JSON.parse(readFileSync(file, 'utf8'));
     writeFileSync(file, JSON.stringify({ ...saved, language: 'unknown', time: -1 }));

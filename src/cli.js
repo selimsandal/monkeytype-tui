@@ -9,7 +9,7 @@ import { applyWindowsUpdate, cleanupWindowsUpdate, findUpdate, installUpdate } f
 const version = typeof BUILD_VERSION === 'string' ? BUILD_VERSION : 'dev';
 const usage = `Usage: monkeytype-tui [--mode time|words|quote|custom] [--words N | --time SECONDS] [--text "custom words"]
   monkeytype-tui update  check for and install the latest native release
-  --quote-length short|medium|long|thicc --language english|spanish|french|german
+  --quote-length short|medium|long|thicc --language english|spanish|french|german|turkish
   --punctuation --numbers  add punctuation or numbers to generated words
   --version  print the embedded release version
   --strict-space --stop-on-error off|letter|word

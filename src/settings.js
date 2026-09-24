@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 export const timeChoices = [15, 30, 60, 120];
 export const wordChoices = [10, 25, 50, 100];
 export const settingsRows = [
-  { key: 'language', label: 'language', values: ['english', 'spanish', 'french', 'german'], section: 'TEXT' },
+  { key: 'language', label: 'language', values: ['english', 'spanish', 'french', 'german', 'turkish'], section: 'TEXT' },
   { key: 'punctuation', label: 'punctuation', values: [false, true] },
   { key: 'numbers', label: 'numbers', values: [false, true] },
   { key: 'difficulty', label: 'difficulty', values: ['normal', 'expert', 'master'], section: 'CORRECTIONS' },
