@@ -85,14 +85,15 @@ function paintedWord(test, index) {
   const input = index === test.index ? test.input : test.history[index];
   const active = index === test.index && test.ended === null;
   let result = '';
-  for (let i = 0; i < Math.max(target.length, input.length + (active ? 1 : 0)); i++) {
+  const hasSuffix = active || input.length > target.length;
+  for (let i = 0; i < target.length + (hasSuffix ? 1 : 0); i++) {
     const ch = input[i] ?? target[i] ?? ' ';
     const color = input[i] === undefined ? (index < test.index ? error : muted) :
       i >= target.length ? extra : ch === target[i] ? text : error;
-    const cursor = active && i === input.length;
-    result += `${cursor ? '\x1b[48;2;226;183;20m\x1b[38;2;50;52;55m' : background + color}${ch}${background}${reset}`;
+    const cursor = active && i === Math.min(input.length, target.length);
+    result += `${cursor ? '\x1b[48;2;226;183;20m\x1b[38;2;50;52;55m' : background + color}${ch}${background}`;
   }
-  return result;
+  return result + `${muted}${' '.repeat(hasSuffix ? 1 : 2)}`;
 }
 
 function render(test, config, quoteSource) {
@@ -104,16 +105,16 @@ function render(test, config, quoteSource) {
   let line = [], length = 0;
   let activeLine = 0;
   for (let i = 0; i < test.words.length; i++) {
-    const size = Math.max(test.words[i].length, i === test.index ? test.input.length + 1 : 0);
-    if (length && length + size + 1 > contentWidth) {
-      lines.push(line.join(' ')); line = []; length = 0;
+    const size = test.words[i].length + 2;
+    if (length && length + size > contentWidth) {
+      lines.push(line.join('')); line = []; length = 0;
     }
     if (i === test.index) activeLine = lines.length;
     line.push(paintedWord(test, i));
-    length += size + (length ? 1 : 0);
+    length += size;
   }
-  if (line.length) lines.push(line.join(' '));
-  const start = Math.max(0, activeLine - 1);
+  if (line.length) lines.push(line.join(''));
+  const start = Math.max(0, activeLine - 2);
   const shown = lines.slice(start, start + 3);
   const remaining = test.options.time && test.started !== null
     ? Math.max(0, Math.ceil(test.options.time - (Date.now() - test.started) / 1000))
@@ -126,8 +127,10 @@ function render(test, config, quoteSource) {
       config.mode === 'quote' ? quoteChoices : [];
   const chosen = String(config.mode === 'time' ? config.time :
     config.mode === 'words' ? config.words : config.quoteLength);
-  let out = `${background}\x1b[2J`;
-  const at = (row, col, value) => { if (row > 0 && row <= height) out += `${move(row, col)}${value}`; };
+  const rows = new Map();
+  const at = (row, col, value) => {
+    if (row > 0 && row <= height) rows.set(row, (rows.get(row) ?? '') + `${move(row, col)}${value}`);
+  };
   at(2, left, `${accent}monkeytype${muted}  tui`);
   at(2, Math.max(left, width - 17), `${muted}english`);
   const menu = modes.map((mode, i) => `${config.mode === mode ? accent : muted}${i + 1} ${mode}`).join(`${muted}  /  `);
@@ -145,13 +148,14 @@ function render(test, config, quoteSource) {
   } else {
     const label = test.options.time ? `${remaining ?? test.options.time}` :
       `${test.index + 1} / ${test.words.length}`;
-    at(top - 2, left, `${accent}${label}`);
+    const overflow = Math.max(0, test.input.length - test.words[test.index].length);
+    at(top - 2, left, `${accent}${label}${overflow ? `${error}   +${overflow} extra` : ''}`);
     shown.forEach((value, i) => at(top + i * 2, left, value));
     if (config.mode === 'quote' && quoteSource) at(top + 7, left, `${muted}— ${quoteSource.slice(0, contentWidth - 2)}`);
   }
   const hint = 'tab restart   f1-f4 mode   f5/f6 length   esc quit';
   at(height - 2, center(hint), `${muted}${hint}`);
-  return out + reset;
+  return { rows, width, height };
 }
 
 function main() {
@@ -172,7 +176,26 @@ function main() {
   process.stdin.setRawMode(true);
   process.stdin.resume();
   process.stdout.write('\x1b[?1049h\x1b[?25l');
-  const redraw = () => process.stdout.write(render(test, config, quoteSource));
+  let previous = new Map();
+  let dimensions = '';
+  const redraw = () => {
+    const { rows, width, height } = render(test, config, quoteSource);
+    const size = `${width}x${height}`;
+    let output = '';
+    if (size !== dimensions) {
+      output += `${background}\x1b[2J`;
+      dimensions = size;
+      previous = new Map();
+    }
+    for (const row of new Set([...previous.keys(), ...rows.keys()])) {
+      const value = rows.get(row) ?? '';
+      if (value !== (previous.get(row) ?? '')) {
+        output += `${move(row, 1)}${background}${' '.repeat(width)}${value}`;
+      }
+    }
+    if (output) process.stdout.write(output + reset);
+    previous = rows;
+  };
   const timer = setInterval(() => { test.tick(); redraw(); }, 100);
   function exit() {
     clearInterval(timer);
