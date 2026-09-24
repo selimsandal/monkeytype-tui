@@ -3,6 +3,7 @@ import readline from 'node:readline';
 import english from '../data/english.json' with { type: 'json' };
 import englishQuotes from '../data/quotes-english.json' with { type: 'json' };
 import { TypingTest } from './engine.js';
+import { applyWindowsUpdate, cleanupWindowsUpdate, findUpdate, installUpdate } from './updater.js';
 
 const corpus = english.words;
 const quotes = englishQuotes.quotes;
@@ -12,6 +13,7 @@ const wordChoices = [10, 25, 50, 100];
 const quoteChoices = ['short', 'medium', 'long', 'thicc'];
 const quoteRanges = [[0, 100], [101, 300], [301, 600], [601, Infinity]];
 const usage = `Usage: monkeytype-tui [--mode time|words|quote|custom] [--words N | --time SECONDS] [--text "custom words"]
+  monkeytype-tui update  check for and install the latest native release
   --quote-length short|medium|long|thicc
   --version  print the embedded release version
   --strict-space --stop-on-error off|letter|word
@@ -158,8 +160,8 @@ function render(test, config, quoteSource) {
   return { rows, width, height };
 }
 
-function main() {
-  const config = args(process.argv.slice(2));
+function main(argv) {
+  const config = args(argv);
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Run this in an interactive terminal');
   const custom = config.text?.trim().split(/\s+/);
   let quoteSource = '';
@@ -231,4 +233,43 @@ function main() {
   redraw();
 }
 
-try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
+async function start() {
+  let argv = process.argv.slice(2);
+  if (argv[0] === '--apply-update') {
+    await applyWindowsUpdate(argv[1], argv[2], argv[3], argv[4], argv.slice(5));
+    return;
+  }
+  if (argv[0] === '--cleanup-update') {
+    await cleanupWindowsUpdate(argv[1]);
+    if (argv[2] === 'manual') { console.log(`Updated to ${version}`); return; }
+    argv = argv.slice(3);
+    main(argv);
+    return;
+  }
+  if (argv[0] === 'update') {
+    if (version === 'dev') throw new Error('Update is available only in a standalone release');
+    const update = await findUpdate(version);
+    if (!update) { console.log(`Already up to date (${version})`); return; }
+    console.log(`Downloading ${update.version}...`);
+    const status = await installUpdate(update, [], false);
+    if (status === 'installed') console.log(`Updated to ${update.version}`);
+    return;
+  }
+  if (version !== 'dev' && !['--help', '--version'].includes(argv[0]) &&
+      process.stdin.isTTY && process.stdout.isTTY) {
+    try {
+      const update = await findUpdate(version);
+      if (update) {
+        console.log(`Updating to ${update.version}...`);
+        await installUpdate(update, argv, true);
+        return;
+      }
+    } catch (error) {
+      // Network failures must not prevent an offline typing test.
+      console.error(`Update skipped: ${error.message}`);
+    }
+  }
+  main(argv);
+}
+
+start().catch(error => { console.error(error.message); process.exitCode = 1; });
