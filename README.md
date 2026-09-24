@@ -1,6 +1,6 @@
 # monkeytype-tui
 
-A terminal typing test inspired by [Monkeytype](https://github.com/monkeytypegame/monkeytype). Requires Node.js 20+, pnpm, and an interactive terminal. The app has no runtime dependencies.
+A terminal typing test inspired by [Monkeytype](https://github.com/monkeytypegame/monkeytype). Source runs require Node.js 20.10+, pnpm, and an interactive terminal. The app has no runtime dependencies.
 
 ```sh
 cd monkeytype-tui
@@ -11,6 +11,12 @@ pnpm start --mode quote --quote-length medium
 pnpm start --text "one two three" --stop-on-error word
 pnpm test
 ```
+
+## Native downloads
+
+[GitHub Releases](https://github.com/selimsandal/monkeytype-tui/releases) provides standalone archives for Linux, macOS, and Windows on x64 and ARM64. Unpack the archive and run `monkeytype-tui` (or `monkeytype-tui.exe` on Windows); neither Node.js nor Bun is needed. Each archive includes `LICENSE`. Use `SHA256SUMS` on the release to verify the download. macOS binaries are not notarized.
+
+Every push to `main` runs tests and publishes a release named `0.0.<commit-unix-time>-g<7-character-sha>`, following the generated identity format used by harness. The commit timestamp and SHA keep the version stable across workflow reruns. `monkeytype-tui --version` prints the embedded identity. For a local build, install Bun 1.3.10 and run `sh scripts/build-release.sh`; its six archives and checksums appear in `dist/`.
 
 The default is Monkeytype's English **time 30** test, with punctuation and numbers off. The fullscreen interface uses the serika-dark palette, a centered three-line test, a mode bar, and a separate results state. F1/F2/F3 switch between time, words, and quote; F4 selects custom text when supplied with `--text`. F5/F6 cycle Monkeytype's time (15/30/60/120), word (10/25/50/100), or quote-length (short/medium/long/thicc) presets. Tab restarts; Esc quits. Changing modes or lengths starts a new test.
 

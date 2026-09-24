@@ -1,17 +1,19 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import readline from 'node:readline';
+import english from '../data/english.json' with { type: 'json' };
+import englishQuotes from '../data/quotes-english.json' with { type: 'json' };
 import { TypingTest } from './engine.js';
 
-const corpus = JSON.parse(readFileSync(new URL('../data/english.json', import.meta.url))).words;
-const quotes = JSON.parse(readFileSync(new URL('../data/quotes-english.json', import.meta.url))).quotes;
+const corpus = english.words;
+const quotes = englishQuotes.quotes;
+const version = typeof BUILD_VERSION === 'string' ? BUILD_VERSION : 'dev';
 const timeChoices = [15, 30, 60, 120];
 const wordChoices = [10, 25, 50, 100];
 const quoteChoices = ['short', 'medium', 'long', 'thicc'];
 const quoteRanges = [[0, 100], [101, 300], [301, 600], [601, Infinity]];
-const usage = `Usage: node src/cli.js [--mode time|words|quote|custom] [--words N | --time SECONDS] [--text "custom words"]
+const usage = `Usage: monkeytype-tui [--mode time|words|quote|custom] [--words N | --time SECONDS] [--text "custom words"]
   --quote-length short|medium|long|thicc
+  --version  print the embedded release version
   --strict-space --stop-on-error off|letter|word
   --delete-on-error off|letter|word|letter_hard|word_hard
   --difficulty normal|expert|master --confidence off|on|max
@@ -33,6 +35,7 @@ function args(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--help') { console.log(usage); process.exit(0); }
+    if (arg === '--version') { console.log(version); process.exit(0); }
     if (flags[arg]) config[flags[arg]] = true;
     else if (names[arg] && argv[i + 1]) {
       config[names[arg]] = argv[++i];
@@ -205,6 +208,4 @@ function main() {
   redraw();
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
-}
+try { main(); } catch (error) { console.error(error.message); process.exitCode = 1; }
