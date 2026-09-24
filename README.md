@@ -2,9 +2,9 @@
 
 A fullscreen terminal typing test inspired by [Monkeytype](https://github.com/monkeytypegame/monkeytype). It has time, word, and quote modes, inline corrections, and a WPM graph.
 
-[![A 50-word typing test showing corrections, line scrolling, and the results graph](docs/media/typing-demo.gif)](docs/media/typing-demo.mp4)
+[![Typing the launch command in Ghostty, then completing a 50-word typing test and viewing the results graph](docs/media/typing-demo.gif)](docs/media/typing-demo.mp4)
 
-[Watch the typing demo as MP4](docs/media/typing-demo.mp4). The recording shows a corrected typo and a skipped word.
+[Watch the typing demo as MP4](docs/media/typing-demo.mp4). It shows a Ghostty shell launch, a corrected typo, and a skipped word. The typing footage is rendered from the native executable's terminal output and sped up for the preview.
 
 ## Get started
 
