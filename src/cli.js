@@ -99,29 +99,35 @@ function paintedWord(test, index) {
 }
 
 function graph(samples, width, height) {
-  const points = samples.slice(-width);
-  const peak = Math.max(10, ...points.flatMap(point => [point.wpm, point.raw]));
-  const cells = Array.from({ length: height }, () => Array(width).fill(' '));
-  const errorMarks = Array(width).fill(' ');
-  for (const [field, marker] of [['raw', '·'], ['wpm', '●']]) {
-    let previous = null;
-    for (let x = 0; x < points.length; x++) {
-      const y = height - 1 - Math.round(points[x][field] / peak * (height - 1));
-      const column = points.length === 1 ? width - 1 : Math.round(x * (width - 1) / (points.length - 1));
-      cells[y][column] = marker;
-      if (points[x].errors) errorMarks[column] = '×';
-      if (previous && column - previous.x > 1) {
-        for (let step = previous.x + 1; step < column; step++) {
-          const middle = Math.round(previous.y + (y - previous.y) * (step - previous.x) / (column - previous.x));
-          cells[middle][step] = marker === '●' ? '─' : '·';
-        }
+  const peak = Math.max(10, ...samples.flatMap(point => [point.wpm, point.raw]));
+  const pixels = width * 2;
+  const dots = height * 4;
+  const masks = ['raw', 'wpm'].map(() => Array.from({ length: height }, () => Array(width).fill(0)));
+  const errors = Array(width).fill(0);
+  const bits = [[1, 8], [2, 16], [4, 32], [64, 128]];
+  const xAt = i => samples.length === 1 ? pixels - 1 :
+    Math.round(i * (pixels - 1) / (samples.length - 1));
+  for (let i = 0; i < samples.length; i++) {
+    const x = xAt(i);
+    errors[Math.floor(x / 2)] += samples[i].errors;
+    for (const [series, field] of ['raw', 'wpm'].entries()) {
+      const y = dots - 1 - Math.round(samples[i][field] / peak * (dots - 1));
+      const previous = i ? dots - 1 - Math.round(samples[i - 1][field] / peak * (dots - 1)) : y;
+      const from = i ? xAt(i - 1) : x;
+      const steps = Math.max(1, x - from, Math.abs(y - previous));
+      for (let step = 0; step <= steps; step++) {
+        const px = Math.round(from + (x - from) * step / steps);
+        const py = Math.round(previous + (y - previous) * step / steps);
+        masks[series][Math.floor(py / 4)][Math.floor(px / 2)] |= bits[py % 4][px % 2];
       }
-      previous = { x: column, y };
     }
   }
-  return { peak, rows: cells.map(row => row.map(cell =>
-    cell === '●' || cell === '─' ? accent + cell : cell === '·' ? text + cell : ' ').join('')),
-  errors: `${error}${errorMarks.join('')}` };
+  return { peak, rows: masks[0].map((row, y) => row.map((raw, x) => {
+    const wpm = masks[1][y][x];
+    return wpm ? `${accent}${String.fromCharCode(0x2800 + (wpm | raw))}` :
+      raw ? `${text}${String.fromCharCode(0x2800 + raw)}` : ' ';
+  }).join('')),
+  errors: `${error}${errors.map(count => count > 1 ? String(Math.min(count, 9)) : count ? '×' : ' ').join('')}` };
 }
 
 function render(test, config, quoteSource, samples) {
@@ -184,10 +190,12 @@ function render(test, config, quoteSource, samples) {
     if (chartHeight) {
       const chartWidth = Math.max(1, contentWidth - 5);
       const chart = graph(samples, chartWidth, chartHeight);
-      chart.rows.forEach((row, i) => at(chartTop + i, left, `${muted}${i ? '  │ ' : String(chart.peak).padStart(3)}${row}`));
-      at(chartTop + chartHeight, left, `${muted}  └${'─'.repeat(chartWidth + 1)}`);
-      at(chartTop + chartHeight + 1, left, `${muted}    ${chart.errors}`);
-      at(chartTop + chartHeight + 2, left, `${accent}● wpm  ${text}· raw  ${error}× errors`);
+      chart.rows.forEach((row, i) => at(chartTop + i, left,
+        `${muted}${(i === 0 ? chart.peak : i === Math.floor(chartHeight / 2) ? Math.round(chart.peak / 2) : i === chartHeight - 1 ? 0 : '').toString().padStart(4)}│${row}`));
+      const duration = Math.max(0, ((test.ended - test.started) / 1000)).toFixed(1) + 's';
+      at(chartTop + chartHeight, left, `${muted}  0s└${'─'.repeat(Math.max(0, chartWidth - duration.length))}${duration}`);
+      at(chartTop + chartHeight + 1, left, `${muted}     ${chart.errors}`);
+      at(chartTop + chartHeight + 2, left, `${accent}⠿ wpm  ${text}⠿ raw  ${error}× errors`);
     }
     const totals = `correct ${stat.correctWord}   incorrect ${stat.incorrect}   extra ${stat.extra}   missed ${stat.missed}`;
     if (totals.length > contentWidth) {
@@ -236,16 +244,16 @@ function main(argv) {
   const redraw = () => {
     if (test.started !== null && !finished) {
       const elapsed = Math.max(0, (Math.min(Date.now(), test.ended ?? Infinity) - test.started) / 1000);
-      const seconds = Math.floor(elapsed);
+      const quarters = Math.floor(elapsed * 4);
       const record = duration => {
         const stats = test.stats();
         samples.push({ wpm: Math.round(stats.correctWord * 12 / duration),
           raw: Math.round(test.keystrokes * 12 / duration), errors: test.errors - lastErrors });
         lastErrors = test.errors;
       };
-      while (samples.length < seconds) record(samples.length + 1);
+      while (samples.length < quarters) record((samples.length + 1) / 4);
       if (test.ended !== null) {
-        if (elapsed > seconds || !samples.length) record(Math.max(elapsed, 0.001));
+        if (elapsed > quarters / 4 || !samples.length) record(Math.max(elapsed, 0.001));
         finished = true;
       }
     }
