@@ -277,6 +277,8 @@ function main(argv) {
     previous = rows;
   };
   const timer = setInterval(() => { test.tick(); redraw(); }, 100);
+  let mouseSequence = false;
+  let mouseBytes = 0;
   function exit() {
     clearInterval(timer);
     process.stdin.setRawMode(false);
@@ -286,6 +288,17 @@ function main(argv) {
   process.on('SIGTERM', exit);
   process.stdout.on('resize', redraw);
   process.stdin.on('keypress', (str, key) => {
+    if (!key) return;
+    if (key.sequence === '\x1b[M') { mouseBytes = 3; return; }
+    if (mouseBytes) { mouseBytes--; return; }
+    if (key.sequence?.startsWith('\x1b[<')) {
+      mouseSequence = !/[Mm]$/.test(key.sequence);
+      return;
+    }
+    if (mouseSequence) {
+      if (str === 'M' || str === 'm') mouseSequence = false;
+      return;
+    }
     if (key.name === 'escape' || (key.ctrl && key.name === 'c')) return exit();
     if (key.name === 'tab') restart();
     else if (/^f[1-4]$/.test(key.name)) {
@@ -303,7 +316,7 @@ function main(argv) {
     }
     else if (key.name === 'backspace' || (key.ctrl && (key.name === 'w' || key.name === 'backspace'))) {
       test.backspace(!!key.ctrl);
-    } else if (!key.ctrl && !key.meta && /^[^\x00-\x1f\x7f]+$/u.test(str)) {
+    } else if (typeof str === 'string' && !key.ctrl && !key.meta && /^[^\x00-\x1f\x7f]+$/u.test(str)) {
       for (const ch of str) test.insert(ch);
     }
     redraw();
@@ -314,7 +327,7 @@ function main(argv) {
 async function start() {
   let argv = process.argv.slice(2);
   if (argv[0] === '--apply-update') {
-    await applyWindowsUpdate(argv[1], argv[2], argv[3], argv[4], argv.slice(5));
+    await applyWindowsUpdate(argv[1], argv[2], argv[3], argv[4]);
     return;
   }
   if (argv[0] === '--cleanup-update') {
@@ -328,9 +341,10 @@ async function start() {
     if (version === 'dev') throw new Error('Update is available only in a standalone release');
     const update = await findUpdate(version);
     if (!update) { console.log(`Already up to date (${version})`); return; }
-    console.log(`Downloading ${update.version}...`);
+    console.log(`Checking ${update.version}...`);
     const status = await installUpdate(update, [], false);
     if (status === 'installed') console.log(`Updated to ${update.version}`);
+    else console.log(`${status.status === 'pending' ? 'Update already pending' : 'Update started in the background'}. If it does not finish, see ${status.log}`);
     return;
   }
   if (version !== 'dev' && !['--help', '--version'].includes(argv[0]) &&
@@ -338,9 +352,10 @@ async function start() {
     try {
       const update = await findUpdate(version);
       if (update) {
-        console.log(`Updating to ${update.version}...`);
-        await installUpdate(update, argv, true);
-        return;
+        console.log(`Checking ${update.version}...`);
+        const status = await installUpdate(update, argv, true);
+        if (status === 'installed') return;
+        console.log('The update will install after this test closes.');
       }
     } catch (error) {
       // Network failures must not prevent an offline typing test.

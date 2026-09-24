@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { copyFileSync, chmodSync, mkdtempSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, copyFileSync, chmodSync, existsSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { gunzipSync, inflateRawSync } from 'node:zlib';
 
@@ -100,18 +100,52 @@ export function extractBinary(archive, windows) {
   throw new Error(`Release archive does not contain ${binary}`);
 }
 
-function spawnAndWait(command, args, waitForExit = false) {
+function spawnAndWait(command, args) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: 'inherit' });
     child.once('error', reject);
-    if (waitForExit) child.once('exit', resolve);
-    else child.once('spawn', () => { child.unref(); resolve(); });
+    child.once('exit', resolve);
   });
 }
 
+async function startWindowsHelper(helper, args, stage) {
+  const log = join(stage, 'update.log');
+  const output = openSync(log, 'w');
+  let child;
+  try {
+    child = spawn(helper, args, { detached: true, windowsHide: true, stdio: ['ignore', output, output] });
+  } finally {
+    closeSync(output);
+  }
+  await new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('spawn', resolve);
+  });
+  child.unref();
+  const ready = join(stage, 'helper-ready');
+  for (let attempt = 0; attempt < 30; attempt++) {
+    if (existsSync(ready)) return log;
+    if (child.exitCode !== null) throw new Error(`Update helper exited early; see ${log}`);
+    await pause(100);
+  }
+  throw new Error(`Update helper did not start; see ${log}`);
+}
+
 export async function installUpdate(update, args, restart, request = fetch) {
-  const binary = await verifiedBinary(update, request);
   const target = realpathSync(process.execPath);
+  if (process.platform === 'win32') {
+    for (const name of readdirSync(dirname(target))) {
+      if (!name.startsWith('.monkeytype-tui-update-')) continue;
+      const stage = join(dirname(target), name);
+      const marker = join(stage, 'version');
+      if (!existsSync(marker) || readFileSync(marker, 'utf8') !== update.version) continue;
+      const log = join(stage, 'update.log');
+      const failure = join(stage, 'failed');
+      if (existsSync(failure)) throw new Error(`Previous update failed: ${readFileSync(failure, 'utf8')}; see ${log}`);
+      if (Date.now() - statSync(marker).mtimeMs < 3600000) return { status: 'pending', log };
+    }
+  }
+  const binary = await verifiedBinary(update, request);
   const stage = mkdtempSync(join(dirname(target), '.monkeytype-tui-update-'));
   const next = join(stage, basename(target));
   try {
@@ -120,11 +154,13 @@ export async function installUpdate(update, args, restart, request = fetch) {
     if (process.platform === 'win32') {
       const helper = join(stage, 'helper.exe');
       copyFileSync(target, helper);
-      await spawnAndWait(helper, ['--apply-update', target, next, stage, restart ? 'restart' : 'manual', ...args]);
-      return 'scheduled';
+      writeFileSync(join(stage, 'version'), update.version);
+      const log = await startWindowsHelper(helper, ['--apply-update', target, next, stage,
+        restart ? 'after-test' : 'manual'], stage);
+      return { status: 'scheduled', log };
     }
     renameSync(next, target);
-    if (restart) await spawnAndWait(target, args, true);
+    if (restart) await spawnAndWait(target, args);
     return 'installed';
   } finally {
     if (process.platform !== 'win32') rmSync(stage, { recursive: true, force: true });
@@ -133,28 +169,40 @@ export async function installUpdate(update, args, restart, request = fetch) {
 
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-export async function applyWindowsUpdate(target, next, stage, mode, args) {
-  const backup = join(stage, 'previous.exe');
-  for (let attempt = 0; attempt < 100; attempt++) {
-    try { renameSync(target, backup); break; }
-    catch (error) {
-      if (!['EACCES', 'EPERM', 'EBUSY'].includes(error.code) || attempt === 99) throw error;
-      await pause(100);
+export async function applyWindowsUpdate(target, next, stage, mode) {
+  try {
+    const backup = join(stage, 'previous.exe');
+    writeFileSync(join(stage, 'helper-ready'), '');
+    const attempts = mode === 'after-test' ? 7200 : 120;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try { renameSync(target, backup); break; }
+      catch (error) {
+        if (!['EACCES', 'EPERM', 'EBUSY'].includes(error.code) || attempt === attempts - 1) throw error;
+        await pause(500);
+      }
     }
+    try { renameSync(next, target); }
+    catch (error) { renameSync(backup, target); throw error; }
+    await new Promise((resolve, reject) => {
+      const child = spawn(target, ['--cleanup-update', stage, 'manual'],
+        { detached: true, windowsHide: true, stdio: 'ignore' });
+      child.once('error', reject);
+      child.once('spawn', () => { child.unref(); resolve(); });
+    });
+  } catch (error) {
+    writeFileSync(join(stage, 'failed'), error.message);
+    throw error;
   }
-  try { renameSync(next, target); }
-  catch (error) { renameSync(backup, target); throw error; }
-  await spawnAndWait(target, ['--cleanup-update', stage, mode, ...args]);
 }
 
 export async function cleanupWindowsUpdate(stage) {
   if (dirname(stage) !== dirname(realpathSync(process.execPath)) ||
       !basename(stage).startsWith('.monkeytype-tui-update-')) return;
-  for (let attempt = 0; attempt < 30; attempt++) {
+  for (let attempt = 0; attempt < 7200; attempt++) {
     try { rmSync(stage, { recursive: true, force: true }); return; }
     catch (error) {
       if (!['EACCES', 'EPERM', 'EBUSY'].includes(error.code)) throw error;
-      await pause(100);
+      await pause(500);
     }
   }
 }

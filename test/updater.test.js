@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { gzipSync, deflateRawSync } from 'node:zlib';
-import { archiveName, extractBinary, findUpdate, verifiedBinary } from '../src/updater.js';
+import { applyWindowsUpdate, archiveName, extractBinary, findUpdate, verifiedBinary } from '../src/updater.js';
 
 const oldVersion = '0.0.100-g123abcd';
 const newVersion = '0.0.101-gabcdef0';
@@ -78,4 +81,20 @@ test('checks downloaded archive digest before extracting any executable', async 
   assert.equal((await verifiedBinary(update, request)).toString(), 'verified binary');
   checksum = `${'0'.repeat(64)}  ./${name}\n`;
   await assert.rejects(verifiedBinary(update, request), /checksum mismatch/);
+});
+
+test('Windows helper restores the old executable and records replacement failures', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'monkeytype-update-test-'));
+  const stage = join(root, 'stage');
+  const target = join(root, 'monkeytype-tui.exe');
+  mkdirSync(stage);
+  writeFileSync(target, 'old executable');
+  try {
+    await assert.rejects(applyWindowsUpdate(target, join(stage, 'missing.exe'), stage, 'manual'), /ENOENT/);
+    assert.equal(readFileSync(target, 'utf8'), 'old executable');
+    assert.equal(existsSync(join(stage, 'previous.exe')), false);
+    assert.match(readFileSync(join(stage, 'failed'), 'utf8'), /ENOENT/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
