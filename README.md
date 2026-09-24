@@ -6,6 +6,8 @@ A fullscreen terminal typing test inspired by [Monkeytype](https://github.com/mo
 
 [Watch the typing demo as MP4](docs/media/typing-demo.mp4). It shows a Ghostty shell launch, a corrected typo, and a skipped word. The typing footage is rendered from the native executable's terminal output and sped up for the preview.
 
+See [recording in an Amp orb](docs/recording.md) for the development and demo environment.
+
 ## Get started
 
 Download a standalone executable from [GitHub Releases](https://github.com/selimsandal/monkeytype-tui/releases) for Linux, macOS, or Windows (x64 or ARM64). Unpack it, then run `monkeytype-tui` or `monkeytype-tui.exe` in an interactive terminal. The default test is English, time 30, with punctuation and numbers off.
